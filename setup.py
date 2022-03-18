@@ -6,5 +6,6 @@ setuptools.setup(
     author="Duncan Mearns",
     author_email="mearns@neuro.mpg.de",
     description="Small library for building experimental analysis pipelines.",
-    python_requires=">=3.7",
+    packages=setuptools.find_packages(),
+    python_requires=">=3.7"
 )
