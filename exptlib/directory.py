@@ -64,12 +64,12 @@ class NamedTree(TreeLevel):
 
     def __iter__(self):
         for leaf in self.leaves:
-            yield leaf.path
+            yield leaf.path, leaf.data
 
 
 class DirectoryTree(NamedTree):
 
-    def __init__(self, root, *, levels, map_data):
+    def __init__(self, root, *, levels, map_data=lambda x: x.glob("*")):
         super().__init__(*levels, name=root)
         self.directory = Path(self.name)
         assert self.directory.exists(), f"Directory: {self.name} does not exist!"
