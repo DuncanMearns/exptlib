@@ -1,80 +1,56 @@
+from __future__ import annotations
 from pathlib import Path
-from anytree import Node
-import os
+import typing
+from collections.abc import Mapping
 
 
-class TreeLevel(Node):
+class Directory(Mapping):
 
-    def keys(self):
-        return [k for k in self.__dict__.keys() if not k.startswith("_")]
+    def __init__(self, directory: typing.Union[str, Path]):
+        super().__init__()
+        self.directory = Path(directory)
 
-    def child(self, name, make=False):
-        try:
-            return list(filter(lambda x: x.name == name, self.children)).pop()
-        except IndexError as e:
-            if make:
-                child = TreeLevel(name, parent=self)
-                return child
-            raise e
-
-    def __setitem__(self, key, value):
-        self.__setattr__(key, value)
-
-    def __getitem__(self, item):
-        try:
-            return self.__getattribute__(item)
-        except AttributeError:
-            raise KeyError(f"{self} has no key '{item}'")
-
-    def __str__(self):
-        return f"TreeLevel({os.path.join(*[parent.name for parent in self.path])})"
-
-
-class NamedTree(TreeLevel):
-
-    def __init__(self, *level_names, name="root"):
-        super().__init__(name)
-        self.level_names = level_names
+    def __repr__(self):
+        return f"Directory({str(self.directory)})"
 
     @property
-    def level_names(self):
-        return self._level_names
-
-    @level_names.setter
-    def level_names(self, names):
-        self._level_names = names
+    def subdirs(self) -> list:
+        return [subdir.name for subdir in self.directory.glob("*") if subdir.is_dir()]
 
     @property
-    def n_levels(self):
-        return len(self.level_names)
+    def files(self) -> list:
+        return [path.name for path in self.directory.glob('*') if path.is_file()]
 
-    def __setitem__(self, levels, value):
-        assert len(levels) == self.n_levels
-        current = self
-        for level in levels:
-            current = current.child(level, make=True)
-        current.data = value
+    @property
+    def children(self) -> list:
+        return [path.name for path in self.directory.glob("*")]
 
-    def __getitem__(self, levels):
-        assert len(levels) == self.n_levels
-        result = self
-        for level in levels:
-            result = result.child(level)
-        return result
+    def new_subdir(self, name) -> Directory:
+        new = self.directory.joinpath(name)
+        new.mkdir(exist_ok=True)
+        return Directory(new)
+
+    def new_file(self, name, ext=None) -> Path:
+        if ext:
+            name = ".".join([name, ext])
+        return self.directory.joinpath(name)
+
+    def __getattr__(self, item):
+        val = getattr(self.directory, item)
+        if isinstance(val, Path) and val.is_dir():
+            return Directory(val)
+        return val
+
+    def __getitem__(self, item) -> typing.Union[Directory, Path]:
+        child = self.directory.joinpath(item)
+        if not child.exists():
+            raise ValueError(f"{item} not in {self}")
+        if child.is_dir():
+            return Directory(child)
+        return child
 
     def __iter__(self):
-        for leaf in self.leaves:
-            yield leaf.path, leaf.data
+        return iter(self.children)
 
-
-class DirectoryTree(NamedTree):
-
-    def __init__(self, root, *, levels, map_data=lambda x: x.glob("*")):
-        super().__init__(*levels, name=root)
-        self.directory = Path(self.name)
-        assert self.directory.exists(), f"Directory: {self.name} does not exist!"
-        self.map_data = map_data
-        match = "/".join(["*"] * len(self.level_names))
-        for subdir in self.directory.glob(match):
-            levels = reversed([part for level, part in zip(reversed(self.level_names), reversed(subdir.parts))])
-            self[list(levels)] = self.map_data(subdir)
+    def __len__(self):
+        return len(self.children)

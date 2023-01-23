@@ -1,3 +1,19 @@
+class SetOnce:
+    """Ensures an attribute can only be set once per instance."""
+
+    def __set_name__(self, owner, name):
+        self.name = name
+        self.private_name = "_" + name
+
+    def __get__(self, instance, owner):
+        return getattr(instance, self.private_name)
+
+    def __set__(self, instance, value):
+        if hasattr(instance, self.private_name):
+            raise ValueError(f"Cannot set {instance}.{self.name} more than once.")
+        setattr(instance, self.private_name, value)
+
+
 class ExtendingAttribute:
     """List-type descriptor that allows an attribute to be extended by children.
 

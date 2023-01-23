@@ -1,56 +1,88 @@
 import json
+import typing
+import warnings
 from abc import abstractmethod
 from pathlib import Path
 import pandas as pd
 
+from .descriptors import SetOnce
+
+
+__all__ = ["Metadata", "JSONMetadata", "CSVMetadata"]
+
 
 class Metadata:
-    """Base Metadata class."""
+    """Base metadata class. Mixes file management into any data type.
 
-    def __init__(self, path):
-        self.path = path
-        if self.path.exists():
-            self.data = self.read()
-        else:
-            self.data = self.new()
+    Attributes
+    ----------
+    metadata_type: Any or callable
+        A data type, or callable that returns a data type, that can be saved by the write method.
+    metadata_extension: str
+        Extension appended to path (if not already present).
+    path: Path
+        Where metadata is saved.
+    """
 
-    @property
-    def path(self):
-        return self._path
+    metadata_type = object
+    metadata_extension = ""
 
-    @path.setter
-    def path(self, value):
-        self._path = Path(value)
+    path = SetOnce()
 
-    @property
-    def data(self):
-        return self._data
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    @data.setter
-    def data(self, val):
-        self._data = val
-
-    def __str__(self):
-        return self.data.__str__()
+    def set_path(self, path: typing.Union[str, Path]):
+        if not str(path).endswith(self.metadata_extension):
+            path = ".".join([path, self.metadata_extension])
+        self.path = Path(path)
 
     @abstractmethod
-    def read(self):
-        return
+    def read(self, **kwargs):
+        """Returns a data structure that can be passed to metadata_type from the path."""
+        pass
 
     @abstractmethod
-    def write(self):
-        return
+    def write(self, **kwargs):
+        """Writes an instance returned by metadata_type to the path."""
+        pass
 
-    @abstractmethod
-    def new(self):
-        return
+    @classmethod
+    def create(cls, path: typing.Union[str, Path], *args, **kwargs):
+        """Create a new instance of the metadata_type mixed with metadata file management.
+
+        Parameters
+        ----------
+        path: str or Path
+            Where metadata is saved.
+        """
+        metadata = type(cls.__name__, (cls, cls.metadata_type), {})(*args, **kwargs)
+        metadata.set_path(path)
+        return metadata
+
+    @classmethod
+    def open(cls, path: typing.Union[str, Path], **kwargs):
+        """Import metadata.
+
+        Parameters
+        ----------
+        path: str or Path
+            Where metadata is saved.
+        """
+        metadata = cls.create(path)
+        if not metadata.path.exists():
+            warnings.warn(f"Metadata path {path} does not exist. Creating new file.")
+            metadata.write()
+            return metadata
+        data = metadata.read(**kwargs)
+        return cls.create(path, data)
 
 
-class MappedMetadata(Metadata):
-    """Class for handling metadata stored as key, value pairs."""
+class JSONMetadata(Metadata):
+    """Metadata format that saves dict data as json."""
 
-    def __init__(self, path):
-        super().__init__(path)
+    metadata_type = dict
+    metadata_extension = "json"
 
     def read(self):
         with open(self.path, "r") as json_file:
@@ -58,59 +90,35 @@ class MappedMetadata(Metadata):
 
     def write(self):
         with open(self.path, "w") as json_file:
-            json.dump(self.data, json_file)
-
-    def new(self):
-        return {}
-
-    def __str__(self):
-        return '\n'.join([f'{key}: {val}' for key, val in self.data.items()]) + '\n'
-
-    def keys(self):
-        return self.data.keys()
-
-    def __setitem__(self, key, value):
-        self.data[key] = value
-        self.write()
-
-    def __getitem__(self, item):
-        return self.data[item]
+            json.dump(self, json_file)
 
 
-class TabulatedMetadata(Metadata):
-    """Class for handling tabulated metadata."""
+class CSVMetadata(Metadata):
+    """Metadata format that saves dataframe data as csv."""
 
-    def __init__(self, path, columns, dtypes=None):
-        self.columns = tuple(columns)
-        self.dtypes = dtypes or {}
-        super().__init__(path)
-        for col in self.columns:
-            if col not in self.data.columns:
-                self.data[col] = None
+    metadata_type = pd.DataFrame
+    metadata_extension = "csv"
 
-    def read(self):
-        return pd.read_csv(self.path, dtype=self.dtypes)
+    def read(self, **kwargs):
+        return pd.read_csv(self.path, **kwargs)
 
-    def write(self):
-        self.data.to_csv(self.path, index=False)
+    def write(self, **kwargs):
+        self.to_csv(self.path, **kwargs)
 
-    def new(self):
-        return pd.DataFrame(columns=self.columns)
 
-    def get(self, col, val):
-        df = self.data
-        return df[df[col] == val]
+if __name__ == "__main__":
 
-    def set(self, index, column, val):
-        self.data.loc[index, column] = val
+    import numpy as np
 
-    def append(self, a):
-        self.data = self.data.append(a, ignore_index=True)
+    md = JSONMetadata.open("hello.json")
+    md["hello"] = "world"
+    md.write()
+    print(md)
 
-    def iterrows(self, missing_data=None):
-        if missing_data:
-            df = self.data[pd.isnull(self.data[missing_data])]
-        else:
-            df = self.data
-        for i, vals in df.iterrows():
-            yield i, vals
+    data = np.arange(6).reshape((3, 2))
+    md = CSVMetadata.create("spam", data=data, columns=["col1", "col2"])
+    print(md)
+    md.write(index=False)
+
+    md = CSVMetadata.open("spam")
+    print(md)

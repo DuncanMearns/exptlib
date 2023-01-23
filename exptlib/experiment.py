@@ -1,5 +1,9 @@
-from .metadata import MappedMetadata
+import sys
+
+from .metadata import *
+from .directory import Directory
 from pathlib import Path
+import typing
 
 
 class Experiment:
@@ -8,67 +12,65 @@ class Experiment:
     Attributes
     ----------
     directory : str or Path
-        Main experiment directory containing metadata.
+        Experiment directory.
     data_directory : str or Path
         Directory containing raw data. Can be path-like (str or Path object), or folder name (str) within the main
         experiment directory.
+    metadata : Metadata
+        Instance of a Metadata object.
     """
 
-    def __init__(self, directory, data_directory):
-        # Main experiment directory
-        self.directory = Path(directory)
-        try:
-            assert self.directory.exists()
-        except AssertionError:
-            self._invalid_directory(f"Experiment directory {directory}")
-        # Data directory (may or may not be within main experiment directory)
-        if isinstance(data_directory, str):
-            try:
-                self.data_directory = Path(data_directory)
-                assert self.data_directory.exists()
-            except AssertionError:
-                self.data_directory = self.directory.joinpath(data_directory)
-                if not self.data_directory.exists():
-                    self._invalid_directory(f"Data directory {data_directory})")
-        elif isinstance(data_directory, Path):
-            self.data_directory = data_directory
-            if not self.data_directory.exists():
-                self._invalid_directory(f"Data directory {data_directory}")
+    def __init__(self, directory: Path, data_directory: Path = None, metadata: Metadata = None):
+        self.directory = Directory(directory)
+        self.data_directory = data_directory
+        self.metadata = metadata
+
+    @property
+    def data_directory(self):
+        return self._data_directory
+
+    @data_directory.setter
+    def data_directory(self, path):
+        self._data_directory = Directory(path) if path else path
+
+    @classmethod
+    def open(cls,
+             directory: typing.Union[str, Path],
+             data_directory: typing.Union[str, Path] = None,
+             metadata_type: typing.Type[Metadata] = JSONMetadata,
+             metadata_file: str = "metadata.json",
+             read_metadata_kw: dict = None,
+             reset_metadata: bool = False,
+             metadata_kw: dict = None):
+        # Set the experiment directory
+        directory = Path(directory)
+        if not directory.exists():
+            ret = cls.yes_no_question(f"Directory {directory} does not exist. Create a new experiment in this directory?")
+            if not ret:
+                print("Exiting.")
+                sys.exit()
+        # Set the data directory
+        if data_directory:
+            data_directory = Path(data_directory)
+            if not data_directory.exists():  # check if data directory is subdirectory of experiment directory
+                try:
+                    data_directory = directory.joinpath(data_directory)
+                    assert data_directory.exists()
+                except AssertionError:
+                    raise ValueError(f"Data directory {data_directory} does not exist!")
+        # Set the metadata
+        metadata_path = directory.joinpath(metadata_file)
+        if not metadata_path.exists() or reset_metadata:
+            kw = metadata_kw or {}
+            metadata = metadata_type.create(metadata_path, **kw)
         else:
-            raise TypeError("`data_directory` must be str or Path")
-        # Create metadata file
-        md_path = self.directory.joinpath("metadata.json")
-        self.metadata = MappedMetadata(md_path)
+            kw = read_metadata_kw or {}
+            metadata = metadata_type.open(metadata_path, **kw)
+        return cls(directory, data_directory, metadata)
 
     @property
-    def subdirs(self):
-        return dict([(path.stem, path) for path in self.directory.glob('*') if path.is_dir()])
-
-    @property
-    def files(self):
-        return [path for path in self.directory.glob('*') if path.is_file()]
-
-    @classmethod
-    def create(cls):
-        return
-
-    @classmethod
-    def open(cls):
-        return
-
-    def new_subdir(self, *folders) -> Path:
-        new_dir = self.directory.joinpath(*folders)
-        new_dir.mkdir(parents=True, exist_ok=True)
-        return new_dir
-
-    def new_file(self, name, ext=None) -> Path:
-        if ext:
-            name = ".".join([name, ext])
-        return self.directory.joinpath(name)
-
-    @staticmethod
-    def _invalid_directory(directory):
-        raise ValueError(f"{directory} does not exist!")
+    def metadata_path(self):
+        return self.metadata.path
 
     @staticmethod
     def yes_no_question(q,
