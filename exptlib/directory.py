@@ -5,6 +5,13 @@ from collections.abc import Mapping
 
 
 class Directory(Mapping):
+    """More user-friendly wrapper for pathlib.Path directories. Allows for easier and more explicit navigation through
+    subdirectories, and file and subdirectory creation.
+    
+    Parameters
+    ----------
+    directory: str or Path
+    """
 
     def __init__(self, directory: typing.Union[str, Path]):
         super().__init__()
@@ -15,22 +22,27 @@ class Directory(Mapping):
 
     @property
     def subdirs(self) -> list:
+        """Returns a list of subdirectory names in the directory."""
         return [subdir.name for subdir in self.directory.glob("*") if subdir.is_dir()]
 
     @property
     def files(self) -> list:
+        """Returns a list of file names in the directory."""
         return [path.name for path in self.directory.glob('*') if path.is_file()]
 
     @property
     def children(self) -> list:
+        """Returns a list of file and subdirectory names in the directory."""
         return [path.name for path in self.directory.glob("*")]
 
-    def new_subdir(self, name) -> Directory:
+    def new_subdir(self, name: str) -> Directory:
+        """Create a new subdirectory with the given name."""
         new = self.directory.joinpath(name)
         new.mkdir(exist_ok=True)
         return Directory(new)
 
-    def new_file(self, name, ext=None) -> Path:
+    def new_file(self, name: str, ext: str=None) -> Path:
+        """Return a filepath in the directory with the given name and extension."""
         if ext:
             name = ".".join([name, ext])
         return self.directory.joinpath(name)
