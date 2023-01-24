@@ -18,20 +18,23 @@ class Directory(Mapping):
         self.directory = Path(directory)
 
     def __repr__(self):
-        return f"Directory({str(self.directory)})"
+        return f"Directory('{str(self.directory)}')"
+
+    def __str__(self):
+        return str(self.directory)
 
     @property
-    def subdirs(self) -> list:
+    def subdirs(self) -> typing.List[str]:
         """Returns a list of subdirectory names in the directory."""
         return [subdir.name for subdir in self.directory.glob("*") if subdir.is_dir()]
 
     @property
-    def files(self) -> list:
+    def files(self) -> typing.List[str]:
         """Returns a list of file names in the directory."""
         return [path.name for path in self.directory.glob('*') if path.is_file()]
 
     @property
-    def children(self) -> list:
+    def children(self) -> typing.List[str]:
         """Returns a list of file and subdirectory names in the directory."""
         return [path.name for path in self.directory.glob("*")]
 
@@ -53,7 +56,7 @@ class Directory(Mapping):
             return Directory(val)
         return val
 
-    def __getitem__(self, item) -> typing.Union[Directory, Path]:
+    def _get_child(self, item):
         child = self.directory.joinpath(item)
         if not child.exists():
             raise ValueError(f"{item} not in {self}")
@@ -61,8 +64,41 @@ class Directory(Mapping):
             return Directory(child)
         return child
 
+    def __getitem__(self, keys) -> typing.Union[Directory, Path]:
+        if isinstance(keys, str):
+            keys = (keys,)
+        result = self
+        for item in keys:
+            try:
+                result = result._get_child(item)
+            except AttributeError:
+                raise ValueError(f"{item} not in {result}")
+        return result
+
     def __iter__(self):
         return iter(self.children)
 
     def __len__(self):
         return len(self.children)
+
+    def to_dict(self, full=True):
+        """Return all subdirectory and files as a nested dictionary.
+
+        Parameters
+        ----------
+        full : bool, default=True
+            If True, walk the complete directory tree including all subdirectories.
+        """
+        tree = {}
+        # tree = dict
+        for name, path in self.items():
+            stem, *_ = name.split(".")
+            if full and isinstance(path, Directory):
+                node = path.to_dict()
+                tree[name] = node
+                continue
+            try:
+                tree[stem].append(path)
+            except KeyError:
+                tree[stem] = [path]
+        return tree

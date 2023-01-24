@@ -1,9 +1,8 @@
 import sys
-
-from .metadata import *
-from .directory import Directory
 from pathlib import Path
 import typing
+
+from .directory import Directory
 
 
 class Experiment:
@@ -16,14 +15,11 @@ class Experiment:
     data_directory : str or Path
         Directory containing raw data. Can be path-like (str or Path object), or folder name (str) within the main
         experiment directory.
-    metadata : Metadata
-        Instance of a Metadata object.
     """
 
-    def __init__(self, directory: Path, data_directory: Path = None, metadata: Metadata = None):
+    def __init__(self, directory: Path, data_directory: Path = None, *args, **kwargs):
         self.directory = Directory(directory)
         self.data_directory = data_directory
-        self.metadata = metadata
 
     @property
     def data_directory(self):
@@ -37,11 +33,7 @@ class Experiment:
     def open(cls,
              directory: typing.Union[str, Path],
              data_directory: typing.Union[str, Path] = None,
-             metadata_type: typing.Type[Metadata] = JSONMetadata,
-             metadata_file: str = "metadata.json",
-             read_metadata_kw: dict = None,
-             reset_metadata: bool = False,
-             metadata_kw: dict = None):
+             *args, **kwargs):
         # Set the experiment directory
         directory = Path(directory)
         if not directory.exists():
@@ -58,19 +50,7 @@ class Experiment:
                     assert data_directory.exists()
                 except AssertionError:
                     raise ValueError(f"Data directory {data_directory} does not exist!")
-        # Set the metadata
-        metadata_path = directory.joinpath(metadata_file)
-        if not metadata_path.exists() or reset_metadata:
-            kw = metadata_kw or {}
-            metadata = metadata_type.create(metadata_path, **kw)
-        else:
-            kw = read_metadata_kw or {}
-            metadata = metadata_type.open(metadata_path, **kw)
-        return cls(directory, data_directory, metadata)
-
-    @property
-    def metadata_path(self):
-        return self.metadata.path
+        return cls(directory, data_directory, *args, **kwargs)
 
     @staticmethod
     def yes_no_question(q,
