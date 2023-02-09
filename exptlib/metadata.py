@@ -8,7 +8,8 @@ import pandas as pd
 from .attributes import SetOnce
 
 
-__all__ = ["MetadataFormat", "Metadata", "ReadOnlyMetadata"]
+__all__ = ["Metadata", "ReadOnlyMetadata",
+           "MetadataFormat", "JSONFormat", "CSVFormat"]
 
 
 class MetadataFormat:
@@ -68,12 +69,15 @@ class MetadataFormat:
         ----------
         path: str or Path
             Where metadata is saved.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the metadata path does not exist.
         """
         metadata = cls.create(path)
         if not metadata.path.exists():
-            warnings.warn(f"Metadata path {path} does not exist. Creating new file.")
-            metadata.write()
-            return metadata
+            raise FileNotFoundError(f"Metadata path {path} does not exist.")
         data = metadata.read(**kwargs)
         return cls.create(path, data)
 
@@ -139,9 +143,10 @@ class Metadata:
         path = self.metadata_path(instance)
         metadata = self.metadata_format.create(path, data)
         setattr(instance, self.private_name, metadata)
-        write = True
         if self.safe_overwrite and path.exists():
             write = instance.yes_no_question(f"Attempting to overwrite metadata file: {self.filename}. Overwrite?")
+        else:
+            write = True
         if write:
             metadata.write(**self.write_kw)
 
