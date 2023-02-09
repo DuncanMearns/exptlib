@@ -41,6 +41,7 @@ class Experiment:
             if not ret:
                 print("Exiting.")
                 sys.exit()
+            directory.mkdir(parents=True, exist_ok=True)
         # Set the data directory
         if data_directory:
             data_directory = Path(data_directory)

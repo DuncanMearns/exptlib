@@ -38,10 +38,10 @@ class Directory(Mapping):
         """Returns a list of file and subdirectory names in the directory."""
         return [path.name for path in self.directory.glob("*")]
 
-    def new_subdir(self, name: str) -> Directory:
+    def new_subdir(self, *names: str) -> Directory:
         """Create a new subdirectory with the given name."""
-        new = self.directory.joinpath(name)
-        new.mkdir(exist_ok=True)
+        new = self.directory.joinpath(*names)
+        new.mkdir(exist_ok=True, parents=True)
         return Directory(new)
 
     def new_file(self, name: str, ext: str=None) -> Path:
