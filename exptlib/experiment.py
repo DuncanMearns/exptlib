@@ -13,8 +13,7 @@ class Experiment:
     directory : str or Path
         Experiment directory.
     data_directory : str or Path
-        Directory containing raw data. Can be path-like (str or Path object), or folder name (str) within the main
-        experiment directory.
+        Directory containing raw data.
     """
 
     def __init__(self, directory: Path, data_directory: Path = None, *args, **kwargs):
@@ -34,6 +33,18 @@ class Experiment:
              directory: typing.Union[str, Path],
              data_directory: typing.Union[str, Path] = None,
              *args, **kwargs):
+        """
+        Open an experiment. Prompts user to create a new experiment if one does not already exist in the directory
+        provided.
+
+        Parameters
+        ----------
+        directory : str or Path
+            Experiment directory.
+        data_directory : str or Path
+            Directory containing raw data. Can be path-like (str or Path object), or folder name (str) within the main
+            experiment directory.
+        """
         # Set the experiment directory
         directory = Path(directory)
         if not directory.exists():
