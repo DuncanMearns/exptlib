@@ -1,7 +1,9 @@
+import time
 from multiprocessing import Process, Queue, Lock
 import typing
 import inspect
 from abc import ABC, abstractmethod
+import shutil
 
 from .experiment import Experiment
 
@@ -22,12 +24,13 @@ def args_to_tuples(func):
     def wrapper(*args, **kwargs):
         args = eat_kwargs(func)(*args, **kwargs)
         formatted_args = []
-        for (arg1, arg2) in args:
-            if not isinstance(arg1, tuple):
-                arg1 = (arg1,)
-            if not isinstance(arg2, tuple):
-                arg2 = (arg2,)
-            formatted_args.append((arg1, arg2))
+        if args:
+            for (arg1, arg2) in args:
+                if not isinstance(arg1, tuple):
+                    arg1 = (arg1,)
+                if not isinstance(arg2, tuple):
+                    arg2 = (arg2,)
+                formatted_args.append((arg1, arg2))
         return formatted_args
     return wrapper
 
@@ -71,6 +74,8 @@ class Pipeline:
         Takes first set of args from generator and does some work.
     handler
         Takes output of worker as first argument and second output of generator for additional arguments.
+    kwargs
+        Keyword arguments passed to generator, worker and handler functions.
     """
 
     params = Params
@@ -79,7 +84,7 @@ class Pipeline:
                  generator: typing.Callable,
                  worker: typing.Callable,
                  handler: typing.Callable,
-                 kwargs=None):#: typing.Mapping = None):
+                 kwargs: typing.Mapping = None):
         self.generator = generator
         self.worker = worker
         self.handler = handler
@@ -96,6 +101,7 @@ class Pipeline:
         q_lock = Lock()
         for (inputs, outputs) in io:
             q.put((inputs, outputs))
+        time.sleep(0.01)
         # Run in dummy process if not parallelized
         if not self.params.parallelize():
             self.process_from_queue(self.worker, self.handler, q, q_lock, **self.kwargs)
@@ -171,3 +177,16 @@ class ExperimentPipeline(Pipeline, ABC):
 
     def __call__(self, experiment: Experiment):
         super().__call__(experiment)
+
+
+class TempMixin:
+
+    @property
+    def temp_directory(self):
+        return self._temp_directory_will_be_deleted
+
+    def __call__(self, experiment: Experiment):
+        self._temp_directory_will_be_deleted = experiment.directory.joinpath("temp")
+        self.temp_directory.mkdir(parents=True, exist_ok=False)
+        super().__call__(experiment)
+        shutil.rmtree(self.temp_directory)

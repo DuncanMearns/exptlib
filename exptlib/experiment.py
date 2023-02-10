@@ -32,7 +32,7 @@ class Experiment:
     def open(cls,
              directory: typing.Union[str, Path],
              data_directory: typing.Union[str, Path] = None,
-             *args, **kwargs):
+             mkdir: bool = False, *args, **kwargs):
         """
         Open an experiment. Prompts user to create a new experiment if one does not already exist in the directory
         provided.
@@ -44,11 +44,16 @@ class Experiment:
         data_directory : str or Path
             Directory containing raw data. Can be path-like (str or Path object), or folder name (str) within the main
             experiment directory.
+        mkdir : bool
+            Automatically create experiment directory if it does not exist already.
         """
         # Set the experiment directory
         directory = Path(directory)
         if not directory.exists():
-            ret = cls.yes_no_question(f"Directory {directory} does not exist. Create a new experiment in this directory?")
+            if mkdir:
+                ret = True
+            else:
+                ret = cls.yes_no_question(f"Directory {directory} does not exist. Create a new experiment in this directory?")
             if not ret:
                 print("Exiting.")
                 sys.exit()
