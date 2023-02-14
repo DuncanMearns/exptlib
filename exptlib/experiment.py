@@ -70,7 +70,7 @@ class Experiment:
         return cls(directory, data_directory, *args, **kwargs)
 
     @staticmethod
-    def yes_no_question(q,
+    def yes_no_question(q: str,
                         affirmative_answers=('y', 'yes', '1', 't', 'true'),
                         negative_answers=('n', 'no', '0', 'f', 'false')):
         """Asks the user a yes/no question in the command line.

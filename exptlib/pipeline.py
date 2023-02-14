@@ -1,11 +1,10 @@
-import time
-from multiprocessing import Process, Queue, Lock
+from multiprocessing import Pool
 import typing
 import inspect
-from abc import ABC, abstractmethod
-import shutil
+from pathlib import Path
 
-from .experiment import Experiment
+
+__all__ = ["Pipeline", "run_pipeline", "pipeline_params", "create_analysis_pipeline"]
 
 
 class Params:
@@ -19,20 +18,7 @@ class Params:
         return not cls.n_cores == 1
 
 
-def args_to_tuples(func):
-    """Decorator for converting output of generators to pairs of tuples."""
-    def wrapper(*args, **kwargs):
-        args = eat_kwargs(func)(*args, **kwargs)
-        formatted_args = []
-        if args:
-            for (arg1, arg2) in args:
-                if not isinstance(arg1, tuple):
-                    arg1 = (arg1,)
-                if not isinstance(arg2, tuple):
-                    arg2 = (arg2,)
-                formatted_args.append((arg1, arg2))
-        return formatted_args
-    return wrapper
+pipeline_params = Params
 
 
 def eat_kwargs(func):
@@ -42,15 +28,7 @@ def eat_kwargs(func):
     for param_name, param in sig.parameters.items():
         if param.kind == param.VAR_KEYWORD:
             return func  # return original function if any params are VAR_KEYWORD
-        if param.kind == param.KEYWORD_ONLY:
-            kw.append(param_name)
-
-    # Eat all kwargs if functional cannot handle them
-    if not len(kw):
-        def eat_all_kwargs(*args, **kwargs):
-            return func(*args)
-
-        return eat_all_kwargs
+        kw.append(param_name)
 
     # Eat kwargs that functional cannot handle
     def eat_unused_kwargs(*args, **kwargs):
@@ -63,130 +41,132 @@ def eat_kwargs(func):
     return eat_unused_kwargs
 
 
+def tuple_output(func):
+    """Decorator for converting output of generators to pairs of tuples."""
+    def convert_to_tuple(*args, **kwargs):
+        output = eat_kwargs(func)(*args, **kwargs)
+        if not isinstance(output, tuple):
+            output = (output,)
+        return output
+    return convert_to_tuple
+
+
+def worker_process(workers: typing.Iterable[typing.Callable], args: typing.Tuple, kwargs: typing.Mapping):
+    """Implements pipeline of worker functions in a separate process."""
+    if not isinstance(args, tuple):
+        args = (args,)
+    for worker in workers:
+        args = tuple_output(worker)(*args, **kwargs)
+    return args
+
+
+def run_pipeline(n: int,
+                 args: typing.Union[typing.Iterable, typing.Generator],
+                 workers: typing.Iterable[typing.Callable] = (),
+                 callback: typing.Callable[[typing.Any], typing.Any] = None,
+                 kwargs: typing.Mapping = None):
+    """Run an asynchronous pipeline of workers across n cores, iterating over args."""
+    kwargs = kwargs or {}
+    if n == 1:
+        results = []
+        for arg in args:
+            result = worker_process(workers, arg, kwargs)
+            results.append(result)
+        if callback:
+            callback(results)
+        return
+    # Start worker pool
+    with Pool(processes=n) as pool:
+        result = pool.starmap_async(worker_process, ((workers, arg, kwargs) for arg in args), callback=callback)
+        result.get()
+
+
 class Pipeline:
-    """Pipeline class for running batch analyses.
+    """Class for creating analysis pipelines.
 
     Attributes
     ----------
-    generator
-        Yields pairs of input args and output args. Inputs args are passed to worker.
-    worker
-        Takes first set of args from generator and does some work.
-    handler
-        Takes output of worker as first argument and second output of generator for additional arguments.
+    workers : callable
+        Functions that do work in a separate process. The output of each feeds into the next. The first is called with
+        the args passed to the Pipeline object when called.
+    generator : callable (optional)
+        Takes the input to the Pipeline object and yields arguments that are additionally passed to workers.
+    callback : callable (optional)
+        Processes aggregated outputs from final pipeline workers back in main process.
     kwargs
-        Keyword arguments passed to generator, worker and handler functions.
+        Keyword arguments passed to pipeline functions.
     """
 
     params = Params
 
-    def __init__(self,
-                 generator: typing.Callable,
-                 worker: typing.Callable,
-                 handler: typing.Callable,
-                 kwargs: typing.Mapping = None):
+    def __init__(self, *workers, generator=None, callback=None, kwargs=None):
+        self.workers = workers
         self.generator = generator
-        self.worker = worker
-        self.handler = handler
+        self.callback = callback
         self.kwargs = kwargs or {}
 
     def __call__(self, *args, **kwargs):
         self.kwargs.update(kwargs)
-        # Generate inputs
-        io = args_to_tuples(self.generator)(*args, **self.kwargs)
-        if not io:
-            return
-        # Add inputs to queue
-        q = Queue()
-        q_lock = Lock()
-        for (inputs, outputs) in io:
-            q.put((inputs, outputs))
-        time.sleep(0.01)
-        # Run in dummy process if not parallelized
-        if not self.params.parallelize():
-            self.process_from_queue(self.worker, self.handler, q, q_lock, **self.kwargs)
-            return
-        # Create worker pool
-        workers = [Process(target=self.process_from_queue,
-                           args=(self.worker, self.handler, q, q_lock),
-                           kwargs=self.kwargs,
-                           name=f'Worker-{i}')
-                   for i in range(self.params.n_cores)]
-        # Start all workers
-        for p in workers:
-            p.start()
-        # Join all workers
-        for p in workers:
-            p.join()
-        return
+        if self.generator:
+            args = eat_kwargs(self.generator)(*args, **self.kwargs)
+        self.run(self.params.n_cores, args, self.workers, self.callback, self.kwargs)
+
+    run = staticmethod(run_pipeline)
+
+
+def analysis_pipeline(input_path: typing.Union[Path, str],
+                      reader: typing.Callable,
+                      worker: typing.Callable,
+                      writer: typing.Callable,
+                      output_path: typing.Union[Path, str],
+                      **kwargs: typing.Mapping):
+    """Implements a basic analysis pipeline."""
+    kwargs = kwargs or {}
+    args = tuple_output(reader)(input_path, **kwargs)
+    result = tuple_output(worker)(*args, **kwargs)
+    return eat_kwargs(writer)(output_path, *result, **kwargs)
+
+
+class IOMapper:
+    """Generates appropriate arguments to be passed to the analysis_pipeline function."""
+
+    def __init__(self, generator, reader, worker, writer):
+        self.generator = generator
+        self.reader = reader or IOMapper.dummy
+        self.worker = worker or IOMapper.dummy
+        self.writer = writer or IOMapper.dummy
 
     @staticmethod
-    def process_from_queue(worker: typing.Callable, handler: typing.Callable, queue, queue_lock, **kwargs):
-        """Takes arguments from a queue, passes them to worker, and handles output."""
-        while True:
-            with queue_lock:
-                if queue.empty():
-                    return
-                input_args, output_args = queue.get()
-            result = eat_kwargs(worker)(*input_args, **kwargs)
-            eat_kwargs(handler)(result, *output_args, **kwargs)
+    def dummy(*args, **kwargs):
+        return args
+
+    def __call__(self, *args, **kwargs):
+        for input_path, output_path in eat_kwargs(self.generator)(*args, **kwargs):
+            yield input_path, self.reader, self.worker, self.writer, output_path
 
 
-class ExperimentPipeline(Pipeline, ABC):
-    """Base class for running pipelines from an Experiment object."""
+def create_analysis_pipeline(*,
+                             generator: typing.Union[typing.Generator, typing.Callable],
+                             reader: typing.Callable,
+                             worker: typing.Callable,
+                             writer: typing.Callable,
+                             callback: typing.Callable = None,
+                             **kwargs: typing.Mapping):
+    """Creates a parallelized analysis pipeline with a generator, reader, worker and writer function.
 
-    def __init__(self, **kwargs):
-        super().__init__(self.generate_io, self.run, self.write, **kwargs)
-
-    @abstractmethod
-    def generate_io(self, experiment: Experiment, **kwargs):
-        """Yields input, output pairs from the experiment.
-
-        Parameters
-        ----------
-        experiment
-            An Experiment object.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def run(self, *args, **kwargs):
-        """Handle inputs from generate_io.
-
-        Parameters
-        ----------
-        args:
-            Passed from the first output of generate_io.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def write(self, result: typing.Any, output: typing.Any, *args, **kwargs):
-        """Takes the output of run as the first arguments. Other args passed from output of generate_io.
-
-        Parameters
-        ----------
-        result
-            Passed from the output of run.
-        output
-            Passed from second output of generate_io.
-        args
-            Other arguments passed from second output of generate_io.
-        """
-        raise NotImplementedError
-
-    def __call__(self, experiment: Experiment):
-        super().__call__(experiment)
-
-
-class TempMixin:
-
-    @property
-    def temp_directory(self):
-        return self._temp_directory_will_be_deleted
-
-    def __call__(self, experiment: Experiment):
-        self._temp_directory_will_be_deleted = experiment.directory.joinpath("temp")
-        self.temp_directory.mkdir(parents=True, exist_ok=False)
-        super().__call__(experiment)
-        shutil.rmtree(self.temp_directory)
+    Parameters
+    ----------
+    generator
+        Generates (input_path, output_path) pairs from pipeline input.
+    reader
+        Receives an input path from the generator as an argument.
+    worker
+        Receives the output from the reader as an argument (unpacks wth * if reader returns multiple values).
+    writer
+        Receives the output path from the generator as the first argument. Subsequent arguments are passed from the
+        worker (unpacks wth * if worker returns multiple values).
+    callback
+        Callable that receives the asynchronous result from the pipeline as its only argument.
+    """
+    generator = IOMapper(generator, reader, worker, writer)
+    return Pipeline(analysis_pipeline, generator=generator, callback=callback, kwargs=kwargs)
